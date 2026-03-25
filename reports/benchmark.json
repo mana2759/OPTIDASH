@@ -1,0 +1,43 @@
+{
+  "projectPath": "C:\\Users\\imran\\Desktop\\OptiDash",
+  "runCount": 100,
+  "originalEntry": "C:\\Users\\imran\\Desktop\\OptiDash\\src\\cli.js",
+  "optimizedEntry": "C:\\Users\\imran\\Desktop\\OptiDash\\dist\\benchmark\\main.optimized.js",
+  "before": {
+    "runs": 100,
+    "avgTimeMs": 131.19,
+    "p95LatencyMs": 140.28,
+    "peakMemoryMB": 96.08
+  },
+  "after": {
+    "runs": 100,
+    "avgTimeMs": 42.48,
+    "p95LatencyMs": 45.75,
+    "peakMemoryMB": 84.41
+  },
+  "improvements": {
+    "avgTimePercent": 67.62,
+    "peakMemoryPercent": 12.15,
+    "p95LatencyPercent": 67.39
+  },
+  "table": [
+    {
+      "Metric": "Avg time",
+      "Before": "131.19ms",
+      "After": "42.48ms",
+      "Improvement": "67.62% faster"
+    },
+    {
+      "Metric": "Peak memory",
+      "Before": "96.08MB",
+      "After": "84.41MB",
+      "Improvement": "12.15% less"
+    },
+    {
+      "Metric": "P95 latency",
+      "Before": "140.28ms",
+      "After": "45.75ms",
+      "Improvement": "67.39% faster"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+	"name": "bloated-app",
+	"version": "1.0.0",
+	"type": "module",
+	"dependencies": {
+		"lodash": "latest",
+		"moment": "latest",
+		"axios": "latest",
+		"underscore": "latest",
+		"react": "latest",
+		"chalk": "latest",
+		"fs-extra": "latest",
+		"commander": "latest",
+		"ora": "latest",
+		"esbuild": "latest"
+	}
+}

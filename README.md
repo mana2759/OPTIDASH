@@ -39,7 +39,9 @@ cd optidash
 
 # 2) Install dependencies
 npm install
+npm link
 ```
+<img width="1919" height="1019" alt="Screenshot 2026-03-26 225555" src="https://github.com/user-attachments/assets/2161b510-ab8f-4599-a2ca-8fec331d2d3d" />
 
 ## Usage
 
@@ -47,16 +49,22 @@ npm install
 
 ```bash
 # Analyze a project directory
-node src/cli.js analyze .
+optidash analyze "path of folder or files"
 
 # Optimize JS/CSS and write output into /dist
-node src/cli.js optimize .
+optidash serve "path of folder or files"
+
+<img width="1919" height="946" alt="Screenshot 2026-03-26 225621" src="https://github.com/user-attachments/assets/8a7f2afb-5177-4281-92d0-b056a24831ad" />
+
 
 # Serve dashboard + live APIs at http://localhost:3000
-node src/cli.js serve .
+http://localhost:3000
+<img width="1919" height="973" alt="Screenshot 2026-03-26 225638" src="https://github.com/user-attachments/assets/a423705d-3436-4143-9f45-2424c23a1b90" />
 
 # Generate static HTML report in /reports
-node src/cli.js report .
+(http://localhost:3000)
+<img width="1919" height="970" alt="Screenshot 2026-03-26 225656" src="https://github.com/user-attachments/assets/be4a481d-6235-41ac-ba13-0aa33755ccd5" />
+
 ```
 
 ### NPM Script Shortcuts
@@ -68,6 +76,7 @@ npm run start
 ```
 
 ## Screenshots
+<img width="1440" height="5491" alt="screencapture-localhost-3000-2026-03-26-23_21_47 (2)" src="https://github.com/user-attachments/assets/5db262d0-7aa3-410f-871f-ad396ef7a133" />
 
 Dashboard views to include in your project documentation:
 
@@ -75,7 +84,6 @@ Dashboard views to include in your project documentation:
 - 🧠 Live memory timeline during optimization
 - ✅ Optimization suggestions + progress updates
 
-Tip: Capture screenshots while running `node src/cli.js serve .` and place them in your preferred docs/assets folder.
 
 ## Before vs After
 

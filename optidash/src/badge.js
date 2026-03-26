@@ -31,8 +31,8 @@ function buildBadgeSvg(score, grade) {
 <svg xmlns="http://www.w3.org/2000/svg" width="160" height="28" role="img" aria-label="optimization score">
 	<rect x="0" y="0" width="80" height="28" fill="#2d2d2d" />
 	<rect x="80" y="0" width="80" height="28" fill="${rightColor}" />
-	<text x="40" y="18" text-anchor="middle" fill="#ffffff" font-family="DejaVu Sans,sans-serif" font-size="11">optimized</text>
-	<text x="120" y="18" text-anchor="middle" fill="#111111" font-family="DejaVu Sans,sans-serif" font-size="11">${rightText}</text>
+	<text x="40" y="18" text-anchor="middle" fill="#ffffff" font-family="DejaVu Sans" font-size="11">optimized</text>
+	<text x="120" y="18" text-anchor="middle" fill="#111111" font-family="DejaVu Sans" font-size="11">${rightText}</text>
 </svg>
 `;
 }
@@ -75,9 +75,10 @@ export default async function generateBadge(dirPath) {
 	const reportsDir = path.join(projectRoot, 'reports');
 	await mkdir(reportsDir, { recursive: true });
 
-	const badgePath = path.join(reportsDir, 'badge.svg');
+	const badgePath = './reports/badge.svg';
+	const badgeFsPath = path.join(projectRoot, 'reports', 'badge.svg');
 	const svg = buildBadgeSvg(score, grade);
-	await writeFile(badgePath, svg, 'utf8');
+	await writeFile(badgeFsPath, svg, 'utf8');
 
 	await ensureReadmeLine(projectRoot);
 

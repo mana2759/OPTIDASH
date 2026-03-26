@@ -1,15 +1,10 @@
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { performance } from 'node:perf_hooks';
 import chalk from 'chalk';
 import optimizeProject from './optimizer.js';
 
 const RUN_COUNT = 20;
-
-function toMs(start, end) {
-	return Number((end - start).toFixed(2));
-}
 
 function percentile(values, p) {
 	if (values.length === 0) {
@@ -20,30 +15,12 @@ function percentile(values, p) {
 	return sorted[index];
 }
 
-function summarizeRuns(timesMs, memorySnapshotsBytes) {
-	const avgTime = timesMs.length > 0
-		? Number((timesMs.reduce((sum, n) => sum + n, 0) / timesMs.length).toFixed(2))
-		: 0;
-
-	return {
-		runs: timesMs,
-		memorySnapshots: memorySnapshotsBytes,
-		avgTime,
-		minTime: timesMs.length > 0 ? Math.min(...timesMs) : 0,
-		maxTime: timesMs.length > 0 ? Math.max(...timesMs) : 0,
-		p95Time: Number(percentile(timesMs, 95).toFixed(2)),
-		peakMemoryBytes: memorySnapshotsBytes.length > 0 ? Math.max(...memorySnapshotsBytes) : 0,
-		peakMemoryMB: memorySnapshotsBytes.length > 0
-			? Number((Math.max(...memorySnapshotsBytes) / (1024 * 1024)).toFixed(2))
-			: 0
-	};
+function toMB(bytes) {
+	return Number((bytes / (1024 * 1024)).toFixed(2));
 }
 
 async function findEntryFile(dirPath) {
-	const candidates = [
-		path.join(dirPath, 'index.js'),
-		path.join(dirPath, 'main.js')
-	];
+	const candidates = [path.join(dirPath, 'index.js'), path.join(dirPath, 'main.js')];
 
 	for (const candidate of candidates) {
 		try {
@@ -54,17 +31,33 @@ async function findEntryFile(dirPath) {
 		}
 	}
 
-	throw new Error(`Unable to locate main entry file (index.js or main.js) in: ${dirPath}`);
+	return null;
+}
+
+function summarizeRuns(timesMs, memorySnapshotsMB) {
+	const avgTime = timesMs.length > 0
+		? Number((timesMs.reduce((sum, n) => sum + n, 0) / timesMs.length).toFixed(2))
+		: 0;
+
+	return {
+		runs: timesMs,
+		memorySnapshots: memorySnapshotsMB,
+		avgTime,
+		minTime: timesMs.length > 0 ? Math.min(...timesMs) : 0,
+		maxTime: timesMs.length > 0 ? Math.max(...timesMs) : 0,
+		p95Time: Number(percentile(timesMs, 95).toFixed(2)),
+		peakMemoryMB: memorySnapshotsMB.length > 0 ? Math.max(...memorySnapshotsMB) : 0
+	};
 }
 
 async function runEntryMultipleTimes(entryPath, cwd) {
 	const timesMs = [];
-	const memorySnapshotsBytes = [];
+	const memorySnapshotsMB = [];
 
 	for (let i = 0; i < RUN_COUNT; i += 1) {
-		memorySnapshotsBytes.push(process.memoryUsage().heapUsed);
+		memorySnapshotsMB.push(toMB(process.memoryUsage().heapUsed));
 
-		const startedAt = performance.now();
+		const startedAt = Date.now();
 		await new Promise((resolve, reject) => {
 			execFile(process.execPath, [entryPath], { cwd }, (error) => {
 				if (error) {
@@ -74,11 +67,11 @@ async function runEntryMultipleTimes(entryPath, cwd) {
 				resolve();
 			});
 		});
-		const endedAt = performance.now();
-		timesMs.push(toMs(startedAt, endedAt));
+		const endedAt = Date.now();
+		timesMs.push(endedAt - startedAt);
 	}
 
-	return summarizeRuns(timesMs, memorySnapshotsBytes);
+	return summarizeRuns(timesMs, memorySnapshotsMB);
 }
 
 function pctImprovement(before, after) {
@@ -100,59 +93,117 @@ function formatKbFromBytes(bytes) {
 	return `${(bytes / 1024).toFixed(2)}KB`;
 }
 
-function printComparisonTable(beforeStats, afterStats, sizeBefore, sizeAfter) {
-	const avgImprove = pctImprovement(beforeStats.avgTime, afterStats.avgTime);
-	const memoryImprove = pctImprovement(beforeStats.peakMemoryMB, afterStats.peakMemoryMB);
-	const sizeImprove = pctImprovement(sizeBefore, sizeAfter);
-
-	const rows = [
-		{
-			Metric: 'Avg time',
-			Before: formatMs(beforeStats.avgTime),
-			After: formatMs(afterStats.avgTime),
-			Improvement: chalk.green(`${avgImprove}% faster`)
-		},
-		{
-			Metric: 'Peak memory',
-			Before: formatMb(beforeStats.peakMemoryMB),
-			After: formatMb(afterStats.peakMemoryMB),
-			Improvement: chalk.green(`${memoryImprove}% less`)
-		},
-		{
-			Metric: 'Bundle size',
-			Before: formatKbFromBytes(sizeBefore),
-			After: formatKbFromBytes(sizeAfter),
-			Improvement: chalk.green(`${sizeImprove}% smaller`)
-		}
-	];
-
-	console.log(chalk.cyan.bold('\nBenchmark Comparison'));
-	console.table(rows);
+function emptyStats() {
+	return {
+		runs: [],
+		memorySnapshots: [],
+		avgTime: 0,
+		minTime: 0,
+		maxTime: 0,
+		p95Time: 0,
+		peakMemoryMB: 0
+	};
 }
 
 export default async function benchmarkProject(dirPath) {
-	const root = path.resolve(dirPath);
-	const beforeEntry = await findEntryFile(root);
+	try {
+		const root = path.resolve(dirPath);
+		let before = emptyStats();
+		let after = emptyStats();
+		let beforeEntry = await findEntryFile(root);
 
-	const before = await runEntryMultipleTimes(beforeEntry, root);
-
-	const optimization = await optimizeProject(root);
-
-	const afterEntry = path.join(root, 'dist', 'bundle.js');
-	await access(afterEntry);
-
-	const after = await runEntryMultipleTimes(afterEntry, root);
-
-	printComparisonTable(before, after, optimization.originalSize, optimization.optimizedSize);
-
-	return {
-		before,
-		after,
-		optimization,
-		comparison: {
-			avgTimeImprovementPercent: pctImprovement(before.avgTime, after.avgTime),
-			peakMemoryImprovementPercent: pctImprovement(before.peakMemoryMB, after.peakMemoryMB),
-			bundleSizeImprovementPercent: pctImprovement(optimization.originalSize, optimization.optimizedSize)
+		if (!beforeEntry) {
+			console.log(chalk.yellow('Warning: No index.js or main.js found. Skipping run benchmarks.'));
 		}
-	};
+
+		if (beforeEntry) {
+			try {
+				before = await runEntryMultipleTimes(beforeEntry, root);
+			} catch (error) {
+				console.log(chalk.yellow(`Warning: Before-runs failed (${error.message}). Continuing.`));
+				before = emptyStats();
+			}
+		}
+
+		let optimization = {
+			originalSize: 0,
+			optimizedSize: 0,
+			gzipSize: 0,
+			reductionPercent: 0,
+			timeTaken: 0
+		};
+
+		try {
+			optimization = await optimizeProject(root);
+		} catch (error) {
+			console.log(chalk.yellow(`Warning: Optimization failed (${error.message}). Continuing.`));
+		}
+
+		const afterEntry = path.join(root, 'dist', 'bundle.js');
+		if (beforeEntry) {
+			try {
+				await access(afterEntry);
+				after = await runEntryMultipleTimes(afterEntry, root);
+			} catch (error) {
+				console.log(chalk.yellow(`Warning: After-runs failed (${error.message}). Continuing.`));
+				after = emptyStats();
+			}
+		}
+
+		const avgImprove = pctImprovement(before.avgTime, after.avgTime);
+		const memoryImprove = pctImprovement(before.peakMemoryMB, after.peakMemoryMB);
+		const sizeImprove = pctImprovement(optimization.originalSize, optimization.optimizedSize);
+		const hasRuntimeComparison = before.runs.length > 0 && after.runs.length > 0;
+
+		console.log(chalk.cyan.bold('\nBenchmark Comparison'));
+		console.table([
+			{
+				Metric: chalk.white('Avg time'),
+				Before: hasRuntimeComparison ? formatMs(before.avgTime) : chalk.gray('N/A'),
+				After: hasRuntimeComparison ? formatMs(after.avgTime) : chalk.gray('N/A'),
+				Improvement: hasRuntimeComparison ? chalk.green(`${avgImprove}% faster`) : chalk.gray('N/A')
+			},
+			{
+				Metric: chalk.white('Peak memory'),
+				Before: hasRuntimeComparison ? formatMb(before.peakMemoryMB) : chalk.gray('N/A'),
+				After: hasRuntimeComparison ? formatMb(after.peakMemoryMB) : chalk.gray('N/A'),
+				Improvement: hasRuntimeComparison ? chalk.green(`${memoryImprove}% less`) : chalk.gray('N/A')
+			},
+			{
+				Metric: chalk.white('Bundle size'),
+				Before: formatKbFromBytes(optimization.originalSize),
+				After: formatKbFromBytes(optimization.optimizedSize),
+				Improvement: chalk.green(`${sizeImprove}% smaller`)
+			}
+		]);
+
+		return {
+			before,
+			after,
+			optimization,
+			comparison: {
+				avgTimeImprovementPercent: hasRuntimeComparison ? avgImprove : 0,
+				peakMemoryImprovementPercent: hasRuntimeComparison ? memoryImprove : 0,
+				bundleSizeImprovementPercent: sizeImprove
+			}
+		};
+	} catch (error) {
+		console.error(chalk.red(`Benchmark failed safely: ${error.message}`));
+		return {
+			before: emptyStats(),
+			after: emptyStats(),
+			optimization: {
+				originalSize: 0,
+				optimizedSize: 0,
+				gzipSize: 0,
+				reductionPercent: 0,
+				timeTaken: 0
+			},
+			comparison: {
+				avgTimeImprovementPercent: 0,
+				peakMemoryImprovementPercent: 0,
+				bundleSizeImprovementPercent: 0
+			}
+		};
+	}
 }

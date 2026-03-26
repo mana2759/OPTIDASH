@@ -90,10 +90,13 @@ function removeUnusedImportLines(source) {
       continue;
     }
 
-    const restOfFile = lines.slice(i + 1).join('\n');
+    const fileWithoutImportLine = lines
+      .filter((_, index) => index !== i)
+      .join('\n');
+
     const allUnused = importedNames.every((name) => {
       const regex = new RegExp(`\\b${escapeRegex(name)}\\b`, 'm');
-      return !regex.test(restOfFile);
+      return !regex.test(fileWithoutImportLine);
     });
 
     if (!allUnused) {
@@ -117,10 +120,8 @@ export default async function optimizeProject(dirPath) {
   const startedAt = Date.now();
   const root = path.resolve(dirPath);
   const distDir = path.join(root, 'dist');
-  const tempDir = path.join(distDir, '.tmp-js');
 
   await mkdir(distDir, { recursive: true });
-  await mkdir(tempDir, { recursive: true });
 
   const files = await getFilesRecursive(root);
   const jsFiles = files.filter((f) => path.extname(f).toLowerCase() === '.js');
@@ -142,46 +143,66 @@ export default async function optimizeProject(dirPath) {
   const totalSteps = Math.max(1, jsFiles.length + cssFiles.length);
   progress.start(totalSteps, 0);
 
+  const bundledChunks = [];
+  const skippedFiles = [];
+
   for (const file of jsFiles) {
-    const source = await readFile(file, 'utf8');
-    const cleaned = removeUnusedImportLines(source);
-    const relative = path.relative(root, file);
-    const output = path.join(tempDir, relative);
-    await mkdir(path.dirname(output), { recursive: true });
-    await writeFile(output, cleaned, 'utf8');
-    progress.increment();
+    try {
+      const source = await readFile(file, 'utf8');
+      const cleaned = removeUnusedImportLines(source);
+
+      const buildResult = await build({
+        stdin: {
+          contents: cleaned,
+          resolveDir: path.dirname(file),
+          sourcefile: file,
+          loader: 'js'
+        },
+        bundle: true,
+        minify: true,
+        write: false,
+        format: 'esm',
+        platform: 'node',
+        packages: 'external',
+        ignoreAnnotations: true,
+        logLevel: 'silent'
+      });
+
+      const chunkText = buildResult.outputFiles?.[0]?.text ?? '';
+      bundledChunks.push(chunkText);
+    } catch (error) {
+      skippedFiles.push({
+        file: path.relative(root, file),
+        reason: error?.message ?? 'unknown error'
+      });
+    } finally {
+      progress.increment();
+    }
   }
 
   let cssOptimizedSize = 0;
   for (const file of cssFiles) {
-    const source = await readFile(file, 'utf8');
-    const cleaned = minifyCss(source);
-    const relative = path.relative(root, file);
-    const output = path.join(distDir, relative);
-    await mkdir(path.dirname(output), { recursive: true });
-    await writeFile(output, cleaned, 'utf8');
-    cssOptimizedSize += Buffer.byteLength(cleaned, 'utf8');
-    progress.increment();
+    try {
+      const source = await readFile(file, 'utf8');
+      const cleaned = minifyCss(source);
+      const relative = path.relative(root, file);
+      const output = path.join(distDir, relative);
+      await mkdir(path.dirname(output), { recursive: true });
+      await writeFile(output, cleaned, 'utf8');
+      cssOptimizedSize += Buffer.byteLength(cleaned, 'utf8');
+    } catch (error) {
+      skippedFiles.push({
+        file: path.relative(root, file),
+        reason: error?.message ?? 'unknown error'
+      });
+    } finally {
+      progress.increment();
+    }
   }
 
-  const tempEntry = path.join(tempDir, '__entry__.js');
-  const imports = jsFiles
-    .map((file) => path.relative(root, file).replace(/\\/g, '/'))
-    .sort()
-    .map((rel) => `import './${rel}';`)
-    .join('\n');
-  await writeFile(tempEntry, `${imports}\n`, 'utf8');
-
   const bundlePath = path.join(distDir, 'bundle.js');
-  await build({
-    entryPoints: [tempEntry],
-    outfile: bundlePath,
-    bundle: true,
-    minify: true,
-    format: 'esm',
-    platform: 'node',
-    logLevel: 'silent'
-  });
+  const finalBundle = bundledChunks.filter(Boolean).join('\n');
+  await writeFile(bundlePath, finalBundle, 'utf8');
 
   progress.stop();
 
@@ -191,15 +212,16 @@ export default async function optimizeProject(dirPath) {
   const gzipPath = path.join(distDir, 'bundle.js.gz');
   await pipeline(createReadStream(bundlePath), createGzip(), createWriteStream(gzipPath));
   const gzipInfo = await stat(gzipPath);
+  const gzipKb = Number((gzipInfo.size / 1024).toFixed(2));
 
   const reductionPercent = originalSize > 0
-    ? Math.round(((originalSize - optimizedSize) / originalSize) * 100)
+    ? Number((((originalSize - optimizedSize) / originalSize) * 100).toFixed(2))
     : 0;
 
   const result = {
     originalSize,
     optimizedSize,
-    gzipSize: gzipInfo.size,
+    gzipSize: gzipKb,
     reductionPercent,
     timeTaken: Date.now() - startedAt
   };
@@ -208,10 +230,17 @@ export default async function optimizeProject(dirPath) {
   console.table([
     { Metric: chalk.white('Original Size (bytes)'), Value: chalk.yellow(String(result.originalSize)) },
     { Metric: chalk.white('Optimized Size (bytes)'), Value: chalk.yellow(String(result.optimizedSize)) },
-    { Metric: chalk.white('Gzip Size (KB)'), Value: chalk.yellow((result.gzipSize / 1024).toFixed(2)) },
+    { Metric: chalk.white('Gzip Size (KB)'), Value: chalk.yellow(result.gzipSize.toFixed(2)) },
     { Metric: chalk.green('Savings (%)'), Value: chalk.green(`${result.reductionPercent}%`) },
     { Metric: chalk.white('Time Taken (ms)'), Value: chalk.yellow(String(result.timeTaken)) }
   ]);
+
+  if (skippedFiles.length > 0) {
+    console.log(chalk.yellow(`Skipped ${skippedFiles.length} file(s) due to build/read errors:`));
+    for (const skipped of skippedFiles) {
+      console.log(chalk.yellow(`- ${skipped.file}`));
+    }
+  }
 
   return result;
 }

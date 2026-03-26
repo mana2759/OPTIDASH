@@ -80,86 +80,94 @@ async function runAnalyzeSilenced(targetPath) {
 }
 
 export default async function watchProject(dirPath) {
-	const root = path.resolve(dirPath);
-	const knownSizes = await collectSizesRecursive(root);
-	const lastTenChanges = [];
-	const debounceTimers = new Map();
+	try {
+		const root = path.resolve(dirPath);
+		const knownSizes = await collectSizesRecursive(root);
+		const lastTenChanges = [];
+		const debounceTimers = new Map();
 
-	const watcher = watch(root, { recursive: true }, (_eventType, filename) => {
-		if (!filename) {
-			return;
-		}
+		const watcher = watch(root, { recursive: true }, (_eventType, filename) => {
+			if (!filename) {
+				return;
+			}
 
-		const relativePath = String(filename);
-		const ext = path.extname(relativePath).toLowerCase();
-		if (!WATCHED_EXTENSIONS.has(ext)) {
-			return;
-		}
+			const relativePath = String(filename);
+			const ext = path.extname(relativePath).toLowerCase();
+			if (!WATCHED_EXTENSIONS.has(ext)) {
+				return;
+			}
 
-		const fullPath = path.resolve(root, relativePath);
+			const fullPath = path.resolve(root, relativePath);
 
-		if (debounceTimers.has(fullPath)) {
-			clearTimeout(debounceTimers.get(fullPath));
-		}
+			if (debounceTimers.has(fullPath)) {
+				clearTimeout(debounceTimers.get(fullPath));
+			}
 
-		const timer = setTimeout(async () => {
-			debounceTimers.delete(fullPath);
+			const timer = setTimeout(async () => {
+				debounceTimers.delete(fullPath);
 
-			try {
-				const fileInfo = await stat(fullPath);
-				const previousSize = knownSizes.has(fullPath) ? knownSizes.get(fullPath) : fileInfo.size;
-				const sizeDiff = fileInfo.size - previousSize;
-				knownSizes.set(fullPath, fileInfo.size);
+				try {
+					const fileInfo = await stat(fullPath);
+					const previousSize = knownSizes.has(fullPath) ? knownSizes.get(fullPath) : fileInfo.size;
+					const sizeDiff = fileInfo.size - previousSize;
+					knownSizes.set(fullPath, fileInfo.size);
 
-				// 2a) Analyze changed file.
-				await runAnalyzeSilenced(fullPath);
+					await runAnalyzeSilenced(fullPath);
+					const projectAnalysis = await runAnalyzeSilenced(root);
+					const score = scoreFromAnalysis(projectAnalysis);
 
-				// Recompute project-wide view for score and line metrics.
-				const projectAnalysis = await runAnalyzeSilenced(root);
-				const score = scoreFromAnalysis(projectAnalysis);
+					const changedName = path.basename(fullPath);
+					const line = `Score: ${score}/100 | Size: ${bytesToKB(projectAnalysis.totalSize)}KB | Files: ${projectAnalysis.fileCount} | Changed: ${changedName} (${sizeDeltaLabel(sizeDiff)})`;
 
-				const changedName = path.basename(fullPath);
-				const line = `Score: ${score}/100 | Size: ${bytesToKB(projectAnalysis.totalSize)}KB | Files: ${projectAnalysis.fileCount} | Changed: ${changedName} (${sizeDeltaLabel(sizeDiff)})`;
+					lastTenChanges.push({ filename: changedName, timestamp: new Date().toISOString() });
+					if (lastTenChanges.length > 10) {
+						lastTenChanges.shift();
+					}
 
-				lastTenChanges.push({ filename: changedName, timestamp: new Date().toISOString() });
-				if (lastTenChanges.length > 10) {
-					lastTenChanges.shift();
+					process.stdout.write('\r\x1b[K');
+					process.stdout.write(sizeDiff > 0 ? chalk.red(line) : line);
+				} catch {
+					// Ignore transient or parse errors while watching.
 				}
+			}, 120);
 
-				process.stdout.write('\r\x1b[K');
-				process.stdout.write(sizeDiff > 0 ? chalk.red(line) : line);
-			} catch {
-				// Ignore transient changes (deleted/renamed mid-event).
+			debounceTimers.set(fullPath, timer);
+		});
+
+		const onSigint = () => {
+			try {
+				process.stdout.write('\r\x1b[K\n');
+				console.log(chalk.cyan('Change history (last 10):'));
+				if (lastTenChanges.length === 0) {
+					console.log(chalk.gray('No changes captured.'));
+				} else {
+					for (const item of lastTenChanges) {
+						console.log(`${chalk.gray(item.timestamp)} ${chalk.white(item.filename)}`);
+					}
+				}
+			} finally {
+				watcher.close();
+				process.exit(0);
 			}
-		}, 120);
+		};
 
-		debounceTimers.set(fullPath, timer);
-	});
+		process.on('SIGINT', onSigint);
+		console.log(chalk.green(`Watching ${root} (.js, .ts, .css). Press Ctrl+C to stop.`));
 
-	const onSigint = () => {
-		process.stdout.write('\r\x1b[K\n');
-		console.log(chalk.cyan('Change history (last 10):'));
-		if (lastTenChanges.length === 0) {
-			console.log(chalk.gray('No changes captured.'));
-		} else {
-			for (const item of lastTenChanges) {
-				console.log(`${chalk.gray(item.timestamp)} ${chalk.white(item.filename)}`);
+		return {
+			watching: true,
+			root,
+			close: () => {
+				watcher.close();
+				process.off('SIGINT', onSigint);
 			}
-		}
-
-		watcher.close();
-		process.exit(0);
-	};
-
-	process.on('SIGINT', onSigint);
-	console.log(chalk.green(`Watching ${root} (.js, .ts, .css). Press Ctrl+C to stop.`));
-
-	return {
-		watching: true,
-		root,
-		close: () => {
-			watcher.close();
-			process.off('SIGINT', onSigint);
-		}
-	};
+		};
+	} catch (error) {
+		console.error(chalk.red(`Watcher failed safely: ${error.message}`));
+		return {
+			watching: false,
+			root: path.resolve(dirPath),
+			close: () => {}
+		};
+	}
 }

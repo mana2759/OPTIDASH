@@ -34,35 +34,34 @@ function getAnswer() { return 42 }
 export default getAnswer
 JS
 
-# 1) styles.css with 150 lines, heavily commented and duplicate rules
+# 1) styles.css with 150 lines, heavily commented with duplicate rules
 cat > "$TARGET_DIR/styles.css" <<'CSS'
-/* base reset */
-
-body    {
-    margin:     0;
-    padding:    0;
-    font-family: Arial, sans-serif;
-}
-
 /* padding fix */
-.container {
-    padding: 20px;
-}
+body { margin: 0px; padding: 0px; }
 
-/* duplicate rule */
-.container {
-    padding: 20px;
-}
+/* margin fix */
+body { margin: 0px; }
+
+/* duplicate spacing rule */
+.card { margin: 10px; padding: 10px; border: 1px solid #ddd; }
+
+/* duplicate spacing rule */
+.card { margin: 10px; padding: 10px; border: 1px solid #ddd; }
 CSS
 
 while [ "$(wc -l < "$TARGET_DIR/styles.css")" -lt 150 ]; do
 	echo "/* padding fix */" >> "$TARGET_DIR/styles.css"
+	echo "body { margin: 0px; padding: 0px; }" >> "$TARGET_DIR/styles.css"
 	echo "" >> "$TARGET_DIR/styles.css"
-	echo ".card   {   margin: 10px;   padding: 10px;   border: 1px solid #ddd; }" >> "$TARGET_DIR/styles.css"
+	echo "/* margin fix */" >> "$TARGET_DIR/styles.css"
+	echo "body { margin: 0px; }" >> "$TARGET_DIR/styles.css"
+	echo "" >> "$TARGET_DIR/styles.css"
+	echo "/* duplicate spacing rule */" >> "$TARGET_DIR/styles.css"
+	echo ".card { margin: 10px; padding: 10px; border: 1px solid #ddd; }" >> "$TARGET_DIR/styles.css"
 	echo "/* duplicate rule */" >> "$TARGET_DIR/styles.css"
-	echo ".card   {   margin: 10px;   padding: 10px;   border: 1px solid #ddd; }" >> "$TARGET_DIR/styles.css"
+	echo ".card { margin: 10px; padding: 10px; border: 1px solid #ddd; }" >> "$TARGET_DIR/styles.css"
 	echo "/* spacing cleanup pending */" >> "$TARGET_DIR/styles.css"
-	echo ".title  {   font-size: 16px;   line-height: 1.6; }" >> "$TARGET_DIR/styles.css"
+	echo ".title { font-size: 16px; line-height: 1.6; }" >> "$TARGET_DIR/styles.css"
 	echo "" >> "$TARGET_DIR/styles.css"
 done
 

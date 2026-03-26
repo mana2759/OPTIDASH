@@ -3,6 +3,7 @@ import path from 'node:path';
 import chalk from 'chalk';
 
 const VALID_EXTENSIONS = new Set(['.js', '.ts', '.css', '.html']);
+const SKIP_DIRS = new Set(['node_modules', 'dist']);
 
 async function collectTargetFiles(rootDir) {
   const entries = await readdir(rootDir, { withFileTypes: true });
@@ -10,7 +11,11 @@ async function collectTargetFiles(rootDir) {
 
   for (const entry of entries) {
     const fullPath = path.join(rootDir, entry.name);
+
     if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) {
+        continue;
+      }
       files.push(...(await collectTargetFiles(fullPath)));
       continue;
     }
@@ -24,19 +29,21 @@ async function collectTargetFiles(rootDir) {
   return files;
 }
 
+function escapeRegex(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function parseImportedNames(importLine) {
   const line = importLine.trim();
   if (!line.startsWith('import')) {
     return [];
   }
 
-  // Side-effect imports do not bind names.
   if (/^import\s+['"].+['"];?$/.test(line)) {
     return [];
   }
 
   const names = [];
-
   const defaultMatch = line.match(/^import\s+([A-Za-z_$][\w$]*)\s*(,|from)/);
   if (defaultMatch) {
     names.push(defaultMatch[1]);
@@ -47,20 +54,12 @@ function parseImportedNames(importLine) {
     names.push(namespaceMatch[1]);
   }
 
-  const namedBlockMatch = line.match(/\{([^}]+)\}/);
-  if (namedBlockMatch) {
-    const imports = namedBlockMatch[1]
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    for (const item of imports) {
-      const aliased = item.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
-      if (aliased) {
-        names.push(aliased[2]);
-      } else {
-        names.push(item);
-      }
+  const namedBlock = line.match(/\{([^}]+)\}/);
+  if (namedBlock) {
+    const parts = namedBlock[1].split(',').map((part) => part.trim()).filter(Boolean);
+    for (const part of parts) {
+      const alias = part.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+      names.push(alias ? alias[2] : part);
     }
   }
 
@@ -69,59 +68,74 @@ function parseImportedNames(importLine) {
 
 function countUnusedImportLines(fileContent) {
   const lines = fileContent.split(/\r?\n/);
-  let count = 0;
+  let unusedCount = 0;
 
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i].trim();
+    const line = lines[i].trimStart();
     if (!line.startsWith('import')) {
       continue;
     }
 
-    const names = parseImportedNames(line);
-    if (names.length === 0) {
+    const importedNames = parseImportedNames(lines[i]);
+    if (importedNames.length === 0) {
       continue;
     }
 
-    const restOfFile = lines.slice(i + 1).join('\n');
-    const allUnused = names.every((name) => {
-      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`\\b${escaped}\\b`, 'm');
-      return !regex.test(restOfFile);
+    const contentWithoutImportLine = lines.filter((_, index) => index !== i).join('\n');
+    const allUnused = importedNames.every((name) => {
+      const regex = new RegExp(`\\b${escapeRegex(name)}\\b`);
+      return !regex.test(contentWithoutImportLine);
     });
 
     if (allUnused) {
-      count += 1;
+      unusedCount += 1;
     }
   }
 
-  return count;
+  return unusedCount;
+}
+
+function printSummary(result) {
+  console.log(chalk.cyan.bold('\nOptiDash Analysis Summary'));
+  console.log(chalk.white('Total Size: ') + `${result.totalSize} bytes`);
+  console.log(chalk.white('File Count: ') + `${result.fileCount}`);
+  console.log(chalk.white('Unused Imports: ') + `${result.unusedImports}`);
+  console.log(chalk.white('Memory Used: ') + `${result.memoryUsed} MB`);
+  console.log(chalk.white('Scan Time: ') + `${result.scanTime} ms`);
+
+  console.log(chalk.cyan('\nTop 5 Largest Files'));
+  if (result.largestFiles.length === 0) {
+    console.log('1. (no files found)');
+    return;
+  }
+
+  result.largestFiles.forEach((file, index) => {
+    console.log(`${index + 1}. ${file.name} - ${file.size} bytes`);
+  });
 }
 
 export default async function analyzeProject(dirPath) {
-  const started = Date.now();
-  const resolvedRoot = path.resolve(dirPath);
+  const start = Date.now();
+  const rootDir = path.resolve(dirPath);
 
-  const files = await collectTargetFiles(resolvedRoot);
+  const files = await collectTargetFiles(rootDir);
   let totalSize = 0;
   let unusedImports = 0;
-  const bySize = [];
+  const sizeRows = [];
 
   for (const filePath of files) {
-    const fileStat = await stat(filePath);
-    totalSize += fileStat.size;
+    const fileInfo = await stat(filePath);
+    const source = await readFile(filePath, 'utf8');
 
-    const content = await readFile(filePath, 'utf8');
-    unusedImports += countUnusedImportLines(content);
-
-    bySize.push({
-      name: path.relative(resolvedRoot, filePath),
-      size: fileStat.size
+    totalSize += fileInfo.size;
+    unusedImports += countUnusedImportLines(source);
+    sizeRows.push({
+      name: path.relative(rootDir, filePath),
+      size: fileInfo.size
     });
   }
 
-  const largestFiles = bySize
-    .sort((a, b) => b.size - a.size)
-    .slice(0, 5);
+  const largestFiles = sizeRows.sort((a, b) => b.size - a.size).slice(0, 5);
 
   const result = {
     totalSize,
@@ -129,31 +143,9 @@ export default async function analyzeProject(dirPath) {
     largestFiles,
     unusedImports,
     memoryUsed: Number((process.memoryUsage().heapUsed / (1024 * 1024)).toFixed(2)),
-    scanTime: Date.now() - started
+    scanTime: Date.now() - start
   };
 
-  console.log(chalk.cyan.bold('\nOptiDash Analysis Summary'));
-  console.table([
-    { Metric: chalk.white('Total Size'), Value: chalk.yellow(`${result.totalSize} bytes`) },
-    { Metric: chalk.white('File Count'), Value: chalk.yellow(String(result.fileCount)) },
-    { Metric: chalk.white('Unused Imports'), Value: chalk.yellow(String(result.unusedImports)) },
-    { Metric: chalk.white('Memory Used'), Value: chalk.yellow(`${result.memoryUsed} MB`) },
-    { Metric: chalk.white('Scan Time'), Value: chalk.yellow(`${result.scanTime} ms`) }
-  ]);
-
-  console.log(chalk.magenta('Top 5 Largest Files'));
-  console.table(result.largestFiles.map((file, idx) => ({
-    '#': chalk.gray(String(idx + 1)),
-    File: chalk.white(file.name),
-    Size: chalk.green(`${file.size} bytes`)
-  })));
-
+  printSummary(result);
   return result;
-}
-
-if (import.meta.url === new URL(import.meta.url).href) {
-  analyzeProject('./').catch((error) => {
-    console.error(chalk.red('Analyzer failed:'), error.message);
-    process.exitCode = 1;
-  });
 }

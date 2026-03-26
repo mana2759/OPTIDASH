@@ -28,7 +28,8 @@ async function findCodeFiles(dirPath) {
 }
 
 function parseOptidashStats(codeText) {
-	const match = codeText.match(/OPTIDASH:\s*removedImports=(\d+)\s+optimizedLoops=(\d+)\s+savedBytes=(\d+)/);
+	const firstLine = codeText.split(/\r?\n/, 1)[0] || '';
+	const match = firstLine.match(/OPTIDASH:\s*removedImports=(\d+)\s+optimizedLoops=(\d+)\s+savedBytes=(\d+)/);
 	if (!match) {
 		return { removedImports: 0, optimizedLoops: 0, savedBytes: 0 };
 	}
@@ -86,7 +87,7 @@ export default async function aiFix(dirPath) {
 				model: 'claude-sonnet-4-20250514',
 				max_tokens: 4096,
 				system:
-					'You are a code optimizer. Return ONLY the optimized code. Remove unused imports, replace slow loops with map/filter/reduce, remove dead code. Add this comment at top: // OPTIDASH: removedImports=N optimizedLoops=N savedBytes=N',
+					'You are a code optimizer. Return ONLY the optimized code, nothing else. Remove unused imports, replace slow loops with map/filter/reduce, remove dead code. Add this comment at top: // OPTIDASH: removedImports=N optimizedLoops=N savedBytes=N',
 				messages: [{ role: 'user', content: source }]
 			})
 		});
